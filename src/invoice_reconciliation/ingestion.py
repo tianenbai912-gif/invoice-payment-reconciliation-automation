@@ -12,11 +12,14 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from .models import (
+    CustomerOrderRecord,
     ImportDiagnostics,
     ImportResult,
     InvoiceRecord,
     MoneyAmount,
     PaymentRecord,
+    SupplierInvoiceLine,
+    SupplierInvoiceRecord,
     ValidationError,
 )
 
