@@ -353,3 +353,69 @@ def _build_diagnostics(
         invalid_rows=invalid_rows,
         errors=tuple(errors),
     )
+
+def load_customer_orders_csv(
+    path: str | Path,
+) -> ImportResult[CustomerOrderRecord]:
+    """Load customer order records from a CSV file."""
+    records: list[CustomerOrderRecord] = []
+    errors: list[ValidationError] = []
+    rows_seen = 0
+
+    required_fields = (
+        "order_id",
+        "customer_name",
+        "order_total",
+        "deposit_received",
+        "balance_due",
+        "currency",
+        "status",
+    )
+
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+
+        for row_number, row in enumerate(reader, start=2):
+            rows_seen += 1
+            values = _normalize_values(row, required_fields)
+            missing_fields, row_errors = _required_errors(
+                "customer_orders", row_number, values
+            )
+
+            money_fields = {}
+            for field in ("order_total", "deposit_received", "balance_due"):
+                result = _validated_money(
+                    "customer_orders",
+                    row_number,
+                    field,
+                    values[field],
+                    values["currency"],
+                    missing_fields,
+                )
+                money_fields[field] = result[0]
+                if result[1] is not None:
+                    row_errors.append(result[1])
+
+            errors.extend(row_errors)
+
+            if row_errors:
+                continue
+
+            records.append(
+                CustomerOrderRecord(
+                    order_id=values["order_id"],
+                    customer_name=values["customer_name"],
+                    order_total=money_fields["order_total"],
+                    deposit_received=money_fields["deposit_received"],
+                    balance_due=money_fields["balance_due"],
+                    status=values["status"],
+                    source_row=row_number,
+                )
+            )
+
+    return ImportResult(
+        records=tuple(records),
+        diagnostics=_build_diagnostics(
+            "customer_orders", rows_seen, len(records), errors
+        ),
+    )
