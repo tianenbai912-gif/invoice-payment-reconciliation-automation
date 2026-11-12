@@ -90,6 +90,7 @@ class CustomerOrderRecord:
     status: str
     source_row: int
     completion_date: date | None = None
+    reminder_dates: tuple[date, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

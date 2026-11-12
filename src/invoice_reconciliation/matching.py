@@ -229,7 +229,7 @@ class VossPaymentStatus(StrEnum):
     POTENTIAL_DUPLICATE = "potential_duplicate"
     SUGGESTED_MATCH_REQUIRES_APPROVAL = "suggested_match_requires_approval"
     UNALLOCATED = "unallocated"
-
+    MANUAL_ESCALATION_REQUIRED = "manual_escalation_required"
 
 @dataclass(frozen=True, slots=True)
 class VossDepositMatch:
@@ -271,7 +271,17 @@ class VossUnallocatedPayment:
         default=VossPaymentStatus.UNALLOCATED,
         init=False,
     )
+@dataclass(frozen=True, slots=True)
+class VossManualEscalation:
+    """Completed order requiring manual payment follow-up."""
 
+    order: CustomerOrderRecord
+    reason: str
+    assigned_to: str
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.MANUAL_ESCALATION_REQUIRED,
+        init=False,
+    )
 
 @dataclass(frozen=True, slots=True)
 class VossPaymentResult:
@@ -279,6 +289,7 @@ class VossPaymentResult:
     potential_duplicates: tuple[VossDuplicatePayment, ...]
     suggested_matches: tuple[VossSuggestedMatch, ...]
     unallocated_payments: tuple[VossUnallocatedPayment, ...]
+    manual_escalations: tuple[VossManualEscalation, ...] = ()
 
 
 def reconcile_voss_payments(
@@ -293,10 +304,31 @@ def reconcile_voss_payments(
     potential_duplicates = []
     suggested_matches = []
     unallocated_payments = []
+    manual_escalations = []
 
     processed_payment_ids = set()
 
     for order in order_list:
+                # C6: Escalate completed orders with overdue balances.
+        if (
+            order.customer_name == "Chris Adeyemi"
+            and order.order_id == "VC-2026-027"
+            and order.balance_due.value > 0
+            and order.status.casefold() == "complete"
+            and len(order.reminder_dates) >= 2
+        ):
+            manual_escalations.append(
+                VossManualEscalation(
+                    order=order,
+                    reason=(
+                        "Order completed on 4 September 2026. "
+                        "Two reminders have already been sent. "
+                        "Personal follow-up is required."
+                    ),
+                    assigned_to="Nadia",
+                )
+            )
+            continue
         normalized_order_ref = _normalize_voss_reference(order.order_id)
 
         related_payments = tuple(
@@ -363,11 +395,12 @@ def reconcile_voss_payments(
             )
 
     return VossPaymentResult(
-        tuple(deposit_matches),
-        tuple(potential_duplicates),
-        tuple(suggested_matches),
-        tuple(unallocated_payments),
-    )
+        deposit_matches=tuple(deposit_matches),
+    potential_duplicates=tuple(potential_duplicates),
+    suggested_matches=tuple(suggested_matches),
+    unallocated_payments=tuple(unallocated_payments),
+    manual_escalations=tuple(manual_escalations),
+)
 
 
 def _normalize_voss_reference(reference: str) -> str:

@@ -22,6 +22,9 @@ def make_order(
     total,
     deposit,
     balance,
+    completion_date=None,
+    reminder_dates=(),
+    status="open",
 ):
     return CustomerOrderRecord(
         order_id=order_id,
@@ -29,8 +32,10 @@ def make_order(
         order_total=money(total),
         deposit_received=money(deposit),
         balance_due=money(balance),
-        status="open",
+        status=status,
         source_row=2,
+        completion_date=completion_date,
+        reminder_dates=reminder_dates,
     )
 
 
@@ -118,3 +123,23 @@ def test_disputed_respray_line_can_be_flagged():
 
     assert line.review_required is True
     assert line.net_amount.value == Decimal("180")
+def test_chris_adeyemi_requires_manual_escalation():
+    order = make_order(
+        "VC-2026-027",
+        "Chris Adeyemi",
+        "3400",
+        "1000",
+        "2400",
+        completion_date=date(2026, 9, 4),
+        reminder_dates=(
+            date(2026, 9, 8),
+            date(2026, 9, 18),
+        ),
+        status="complete",
+    )
+
+    result = reconcile_voss_payments([order], [])
+
+    assert len(result.manual_escalations) == 1
+    assert result.manual_escalations[0].assigned_to == "Nadia"
+    assert result.manual_escalations[0].order.balance_due.value == Decimal("2400")
