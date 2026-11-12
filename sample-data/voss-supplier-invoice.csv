@@ -1,0 +1,5 @@
+supplier_name,supplier_invoice_id,invoice_date,due_date,order_reference,description,net_amount,currency,subtotal,vat_amount,total_amount
+Castle Powder Coating,CPC-2609,2026-09-25,2026-10-09,VC-2026-025,Powder coat standard,120,GBP,600,120,720
+Castle Powder Coating,CPC-2609,2026-09-25,2026-10-09,VC-2026-026,Custom colour match,180,GBP,600,120,720
+Castle Powder Coating,CPC-2609,2026-09-25,2026-10-09,VC-2026-026,Re-spray colour correction disputed,180,GBP,600,120,720
+Castle Powder Coating,CPC-2609,2026-09-25,2026-10-09,VC-2026-029,Powder coat standard,120,GBP,600,120,720

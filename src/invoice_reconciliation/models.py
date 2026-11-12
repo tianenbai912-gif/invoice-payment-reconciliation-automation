@@ -89,9 +89,9 @@ class CustomerOrderRecord:
     balance_due: MoneyAmount
     status: str
     source_row: int
+    deposit_expected: MoneyAmount | None = None
     completion_date: date | None = None
     reminder_dates: tuple[date, ...] = ()
-
 
 @dataclass(frozen=True, slots=True)
 class SupplierInvoiceLine:

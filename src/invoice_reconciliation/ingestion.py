@@ -12,11 +12,14 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from .models import (
+    CustomerOrderRecord,
     ImportDiagnostics,
     ImportResult,
     InvoiceRecord,
     MoneyAmount,
     PaymentRecord,
+    SupplierInvoiceLine,
+    SupplierInvoiceRecord,
     ValidationError,
 )
 
@@ -353,3 +356,192 @@ def _build_diagnostics(
         invalid_rows=invalid_rows,
         errors=tuple(errors),
     )
+
+
+def load_customer_orders_csv(path: Path) -> ImportResult[CustomerOrderRecord]:
+    """Load Voss Cycles customer orders from a CSV file."""
+    records = []
+    errors = []
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+
+        required_columns = {
+            "order_id",
+            "customer_name",
+            "order_total",
+            "deposit_received",
+            "deposit_expected",
+            "balance_due",
+            "currency",
+            "status",
+        }
+
+        if not reader.fieldnames or not required_columns.issubset(reader.fieldnames):
+            raise ValueError("Customer orders CSV is missing required columns.")
+
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                order_total = MoneyAmount(
+                    Decimal(row["order_total"]), row["currency"]
+                )
+                deposit = MoneyAmount(
+                    Decimal(row["deposit_received"]), row["currency"]
+                )
+                balance = MoneyAmount(
+                    Decimal(row["balance_due"]), row["currency"]
+                )
+
+                if order_total.value != deposit.value + balance.value:
+                    raise ValueError("Order total does not equal deposit plus balance.")
+
+                records.append(
+                    CustomerOrderRecord(
+                        order_id=row["order_id"].strip(),
+                        customer_name=row["customer_name"].strip(),
+                        order_total=order_total,
+                        deposit_received=deposit,
+                        deposit_expected=MoneyAmount(
+                            Decimal(row["deposit_expected"]), row["currency"]
+                        ),
+                        balance_due=balance,
+                        status=row["status"].strip(),
+                        source_row=row_number,
+                        completion_date=(
+                            date.fromisoformat((row.get("completion_date") or "").strip())
+                            if (row.get("completion_date") or "").strip()
+                            else None
+                        ),
+                        reminder_dates=tuple(
+                            date.fromisoformat(value.strip())
+                            for value in (row.get("reminder_dates") or "").split(";")
+                            if value.strip()
+                        ),
+                    )
+                )
+            except (ValueError, KeyError, ArithmeticError) as exc:
+                errors.append(
+                    ValidationError(
+                    source=str(path),
+                    row_number=row_number,
+                    field="customer_order",
+                    error_code="invalid_customer_order",
+                    message=str(exc),
+                )
+            )
+
+    diagnostics = _build_diagnostics(
+        source=str(path),
+        rows_seen=len(records) + len(errors),
+        valid_rows=len(records),
+        errors=errors,
+    )
+
+    return ImportResult(records=tuple(records), diagnostics=diagnostics)
+
+def load_supplier_invoice_csv(
+    path: str | Path,
+) -> ImportResult[SupplierInvoiceRecord]:
+    """Load and validate supplier invoice line items from CSV."""
+    grouped = {}
+    errors = []
+
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+
+        required_columns = {
+            "supplier_name",
+            "supplier_invoice_id",
+            "invoice_date",
+            "due_date",
+            "order_reference",
+            "description",
+            "net_amount",
+            "currency",
+            "subtotal",
+            "vat_amount",
+            "total_amount",
+        }
+
+        if not reader.fieldnames or not required_columns.issubset(reader.fieldnames):
+            raise ValueError("Supplier invoice CSV is missing required columns.")
+
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                invoice_id = row["supplier_invoice_id"].strip()
+                currency = row["currency"].strip().upper()
+                description = row["description"].strip()
+
+                review_required = (
+                    "re-spray" in description.casefold()
+                    or "respray" in description.casefold()
+                )
+
+                line = SupplierInvoiceLine(
+                    order_reference=row["order_reference"].strip(),
+                    description=description,
+                    net_amount=MoneyAmount(
+                        Decimal(row["net_amount"]), currency
+                    ),
+                    review_required=review_required,
+                    review_note=(
+                        "Disputed re-spray charge requires human review."
+                        if review_required
+                        else None
+                    ),
+                )
+
+                if invoice_id not in grouped:
+                    grouped[invoice_id] = {
+                        "supplier_name": row["supplier_name"].strip(),
+                        "invoice_date": date.fromisoformat(row["invoice_date"]),
+                        "due_date": date.fromisoformat(row["due_date"]),
+                        "lines": [],
+                        "subtotal": MoneyAmount(
+                            Decimal(row["subtotal"]), currency
+                        ),
+                        "vat_amount": MoneyAmount(
+                            Decimal(row["vat_amount"]), currency
+                        ),
+                        "total_amount": MoneyAmount(
+                            Decimal(row["total_amount"]), currency
+                        ),
+                        "source_row": row_number,
+                    }
+
+                grouped[invoice_id]["lines"].append(line)
+
+            except (ValueError, KeyError, ArithmeticError) as exc:
+               errors.append(
+                    ValidationError(
+                        source=str(path),
+                        row_number=row_number,
+                        field="supplier_invoice",
+                        error_code="invalid_supplier_invoice",
+                        message=str(exc),
+                    )
+                )
+
+    records = tuple(
+        SupplierInvoiceRecord(
+            supplier_name=data["supplier_name"],
+            supplier_invoice_id=invoice_id,
+            invoice_date=data["invoice_date"],
+            due_date=data["due_date"],
+            lines=tuple(data["lines"]),
+            subtotal=data["subtotal"],
+            vat_amount=data["vat_amount"],
+            total_amount=data["total_amount"],
+            source_row=data["source_row"],
+        )
+        for invoice_id, data in grouped.items()
+    )
+
+    diagnostics = _build_diagnostics(
+        source=str(path),
+        rows_seen=len(records) + len(errors),
+        valid_rows=len(records),
+        errors=errors,
+    )
+
+    return ImportResult(records=records, diagnostics=diagnostics)

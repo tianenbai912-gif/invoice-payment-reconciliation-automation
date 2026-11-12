@@ -351,11 +351,15 @@ def reconcile_voss_payments(
             payment = related_payments[0]
 
             if (
-                payment.payment_amount.currency
-                == order.deposit_received.currency
+                payment.payment_amount.currency == order.deposit_received.currency
                 and payment.payment_amount.value
-                == order.deposit_received.value
+                == (
+                    order.deposit_expected.value
+                    if order.deposit_expected is not None
+                    else order.deposit_received.value
+                )
             ):
+
                 deposit_matches.append(
                     VossDepositMatch(order, payment)
                 )
@@ -370,7 +374,8 @@ def reconcile_voss_payments(
         candidates = [
             order
             for order in order_list
-            if order.customer_name.split()[0].casefold() in reference
+            if order.customer_name.casefold() == payment.customer_name.casefold()
+            and order.customer_name.split()[0].casefold() in reference
             and order.balance_due.currency == payment.payment_amount.currency
             and order.balance_due.value == payment.payment_amount.value
         ]

@@ -1,0 +1,12 @@
+order_id,customer_name,order_total,deposit_received,deposit_expected,balance_due,currency,status,completion_date,reminder_dates
+VC-2026-025,Priya Shah,3220,3220,1000,0,GBP,complete
+VC-2026-026,Daniel Mensah,4100,1000,1000,3100,GBP,open
+VC-2026-027,Chris Adeyemi,3400,1000,1000,2400,GBP,complete,2026-09-04,2026-09-08;2026-09-18
+VC-2026-028,Aoife Byrne,4230,1000,1000,3230,GBP,open
+VC-2026-029,Tom Hale,3850,1000,1000,2850,GBP,open
+VC-2026-030,Grace Liu,4430,1000,1000,3430,GBP,open
+VC-2026-031,Tom Hughes,3850,1000,1000,2850,GBP,open
+VC-2026-032,Sam Carter,2800,1000,1000,1800,GBP,open
+VC-2026-033,Ben Hartley,5320,1000,1000,4320,GBP,open
+VC-2026-034,Joy Okoro,3400,0,1000,3400,GBP,awaiting_deposit
+VC-2026-035,Harriet Doyle,3450,0,1000,3450,GBP,awaiting_deposit

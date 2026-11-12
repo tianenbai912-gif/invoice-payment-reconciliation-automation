@@ -1,0 +1,6 @@
+payment_id,customer_name,payment_date,payment_amount,currency,payment_reference
+PAY-001,J Okoro,2026-09-24,1000,GBP,VC-2026-034 DEPOSIT
+PAY-002,H Doyle,2026-09-24,1000,GBP,VC2026035
+PAY-003,H Doyle,2026-09-24,1000,GBP,VC-2026-035 deposit
+PAY-004,Tom Hale,2026-09-25,2850,GBP,balance - Tom
+PAY-005,Unknown Customer,2026-09-25,500,GBP,UNIDENTIFIED PAYMENT
