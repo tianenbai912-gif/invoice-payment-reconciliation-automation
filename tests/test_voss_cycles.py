@@ -143,3 +143,23 @@ def test_chris_adeyemi_requires_manual_escalation():
     assert len(result.manual_escalations) == 1
     assert result.manual_escalations[0].assigned_to == "Nadia"
     assert result.manual_escalations[0].order.balance_due.value == Decimal("2400")
+    
+def test_aoife_balance_invoice_and_vat_review_hold():
+    from csv import DictReader
+    from pathlib import Path
+    from invoice_reconciliation.ingestion import load_invoice_file
+
+    invoice_path = Path("sample-data/voss-balance-invoice.csv")
+    result = load_invoice_file(invoice_path)
+
+    assert len(result.records) == 1
+    assert len(result.diagnostics.errors) == 0
+    assert result.records[0].customer_name == "Aoife Byrne"
+    assert result.records[0].invoice_amount.value == Decimal("3230")
+
+    vat_path = Path("sample-data/voss-vat-review.csv")
+    with vat_path.open(newline="", encoding="utf-8") as file:
+        review = next(DictReader(file))
+
+    assert review["review_status"] == "PENDING"
+    assert review["dispatch_status"] == "ON HOLD"
