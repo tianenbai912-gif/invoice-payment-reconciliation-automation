@@ -219,3 +219,192 @@ def _ambiguous_reason(
     if has_duplicate_invoices:
         return AmbiguousReferenceReason.DUPLICATE_INVOICE_REFERENCE
     return AmbiguousReferenceReason.DUPLICATE_PAYMENT_REFERENCE
+
+
+# ---------------------------------------------------------
+# VOSS CYCLES: Customer payment reconciliation extensions
+# ---------------------------------------------------------
+
+from .models import CustomerOrderRecord
+
+
+class VossPaymentStatus(StrEnum):
+    """Voss-specific payment processing outcomes."""
+
+    DEPOSIT_MATCHED = "deposit_matched"
+    POTENTIAL_DUPLICATE = "potential_duplicate"
+    SUGGESTED_MATCH_REQUIRES_APPROVAL = "suggested_match_requires_approval"
+    UNALLOCATED = "unallocated"
+
+
+@dataclass(frozen=True, slots=True)
+class VossDepositMatch:
+    """A verified customer deposit allocation."""
+
+    order: CustomerOrderRecord
+    payment: PaymentRecord
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.DEPOSIT_MATCHED,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossDuplicatePayment:
+    """Potential duplicate payments requiring human review."""
+
+    order: CustomerOrderRecord
+    payments: tuple[PaymentRecord, ...]
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.POTENTIAL_DUPLICATE,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossSuggestedMatch:
+    """Suggested payment-to-order match awaiting human approval."""
+
+    order: CustomerOrderRecord
+    payment: PaymentRecord
+    reason: str
+    requires_human_approval: bool = True
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.SUGGESTED_MATCH_REQUIRES_APPROVAL,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossUnallocatedPayment:
+    """Payment that cannot safely be allocated."""
+
+    payment: PaymentRecord
+    reason: str
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.UNALLOCATED,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossPaymentResult:
+    """Results of Voss customer payment processing."""
+
+    deposit_matches: tuple[VossDepositMatch, ...]
+    potential_duplicates: tuple[VossDuplicatePayment, ...]
+    suggested_matches: tuple[VossSuggestedMatch, ...]
+    unallocated_payments: tuple[VossUnallocatedPayment, ...]
+
+
+def reconcile_voss_payments(
+    orders: Iterable[CustomerOrderRecord],
+    payments: Iterable[PaymentRecord],
+) -> VossPaymentResult:
+    """
+    Process Voss customer deposits and payment exceptions.
+
+    Exact order-reference matches can allocate deposits.
+    Duplicate payments and incomplete references require review.
+    """
+
+    order_list = tuple(orders)
+    payment_list = tuple(payments)
+
+    deposit_matches: list[VossDepositMatch] = []
+    potential_duplicates: list[VossDuplicatePayment] = []
+    suggested_matches: list[VossSuggestedMatch] = []
+    unallocated_payments: list[VossUnallocatedPayment] = []
+
+    processed_payment_ids: set[str] = set()
+
+    for order in order_list:
+        order_ref = _normalize_voss_reference(order.order_id)
+
+        related_payments = tuple(
+            payment
+            for payment in payment_list
+            if _normalize_voss_reference(order.order_id)
+            in _normalize_voss_reference(payment.payment_reference)
+            and payment.payment_amount.currency
+            == order.deposit_received.currency
+            and payment.payment_amount.value
+            == order.deposit_received.value
+        )
+
+        # C2: Detect possible duplicate payments.
+        if len(related_payments) > 1:
+            potential_duplicates.append(
+                VossDuplicatePayment(
+                    order=order,
+                    payments=related_payments,
+                )
+            )
+            processed_payment_ids.update(
+                payment.payment_id for payment in related_payments
+            )
+            continue
+
+        # C1: Match a verified deposit.
+        if len(related_payments) == 1:
+            payment = related_payments[0]
+
+            deposit_matches.append(
+                VossDepositMatch(order=order, payment=payment)
+            )
+            processed_payment_ids.add(payment.payment_id)
+
+    # C3: Suggest a match using customer name and balance amount.
+    for payment in payment_list:
+        if payment.payment_id in processed_payment_ids:
+            continue
+
+        reference = payment.payment_reference.casefold()
+
+        candidates = [
+            order
+            for order in order_list
+            if order.customer_name.split()[0].casefold() in reference
+            and order.balance_due.currency == payment.payment_amount.currency
+            and order.balance_due.value == payment.payment_amount.value
+        ]
+
+        if len(candidates) == 1:
+            suggested_matches.append(
+                VossSuggestedMatch(
+                    order=candidates[0],
+                    payment=payment,
+                    reason=(
+                        "Customer name and outstanding balance match, "
+                        "but the payment reference is incomplete."
+                    ),
+                )
+            )
+            processed_payment_ids.add(payment.payment_id)
+
+    # Record payments that could not be safely allocated.
+    for payment in payment_list:
+        if payment.payment_id not in processed_payment_ids:
+            unallocated_payments.append(
+                VossUnallocatedPayment(
+                    payment=payment,
+                    reason="No reliable automatic payment match found.",
+                )
+            )
+
+    return VossPaymentResult(
+        deposit_matches=tuple(deposit_matches),
+        potential_duplicates=tuple(potential_duplicates),
+        suggested_matches=tuple(suggested_matches),
+        unallocated_payments=tuple(unallocated_payments),
+    )
+
+
+def _normalize_voss_reference(reference: str) -> str:
+    """Normalize references by removing spaces and punctuation."""
+
+    return "".join(
+        character.lower()
+        for character in reference
+        if character.isalnum()
+    )
