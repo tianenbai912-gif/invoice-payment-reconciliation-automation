@@ -1,10 +1,20 @@
-"""Domain models for imported invoice and payment data."""
+
+"""Domain models for Voss Cycles invoice and payment reconciliation."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
+
+
+class InvoiceType(StrEnum):
+    """Types of customer invoices."""
+
+    STANDARD = "standard"
+    DEPOSIT = "deposit"
+    BALANCE = "balance"
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,7 +27,7 @@ class MoneyAmount:
 
 @dataclass(frozen=True, slots=True)
 class InvoiceRecord:
-    """Validated invoice input row."""
+    """Validated customer invoice input row."""
 
     invoice_id: str
     customer_name: str
@@ -25,17 +35,60 @@ class InvoiceRecord:
     due_date: date
     invoice_amount: MoneyAmount
     source_row: int
+    invoice_type: InvoiceType = InvoiceType.STANDARD
+    order_id: str | None = None
+    order_total: MoneyAmount | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class PaymentRecord:
-    """Validated payment input row."""
+    """Validated customer payment input row."""
 
     payment_id: str
     customer_name: str
     payment_date: date
     payment_amount: MoneyAmount
     payment_reference: str
+    source_row: int
+
+
+@dataclass(frozen=True, slots=True)
+class CustomerOrderRecord:
+    """Customer order and outstanding payment information."""
+
+    order_id: str
+    customer_name: str
+    order_total: MoneyAmount
+    deposit_received: MoneyAmount
+    balance_due: MoneyAmount
+    status: str
+    source_row: int
+    completion_date: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SupplierInvoiceLine:
+    """Individual item on a supplier invoice."""
+
+    order_reference: str
+    description: str
+    net_amount: MoneyAmount
+    review_required: bool = False
+    review_note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SupplierInvoiceRecord:
+    """Supplier invoice with line items and VAT information."""
+
+    supplier_name: str
+    supplier_invoice_id: str
+    invoice_date: date
+    due_date: date
+    lines: tuple[SupplierInvoiceLine, ...]
+    subtotal: MoneyAmount
+    vat_amount: MoneyAmount
+    total_amount: MoneyAmount
     source_row: int
 
 
