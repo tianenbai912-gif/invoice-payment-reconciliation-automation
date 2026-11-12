@@ -77,3 +77,42 @@ class ImportResult[TRecord]:
 
     records: tuple[TRecord, ...]
     diagnostics: ImportDiagnostics
+
+@dataclass(frozen=True, slots=True)
+class CustomerOrderRecord:
+    """Customer order and outstanding payment information."""
+
+    order_id: str
+    customer_name: str
+    order_total: MoneyAmount
+    deposit_received: MoneyAmount
+    balance_due: MoneyAmount
+    status: str
+    source_row: int
+    completion_date: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SupplierInvoiceLine:
+    """Individual item on a supplier invoice."""
+
+    order_reference: str
+    description: str
+    net_amount: MoneyAmount
+    review_required: bool = False
+    review_note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SupplierInvoiceRecord:
+    """Supplier invoice with line items and VAT information."""
+
+    supplier_name: str
+    supplier_invoice_id: str
+    invoice_date: date
+    due_date: date
+    lines: tuple[SupplierInvoiceLine, ...]
+    subtotal: MoneyAmount
+    vat_amount: MoneyAmount
+    total_amount: MoneyAmount
+    source_row: int

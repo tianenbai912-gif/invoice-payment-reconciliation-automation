@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from .models import InvoiceRecord, PaymentRecord
+from .models import CustomerOrderRecord, InvoiceRecord, PaymentRecord
 
 
 class MatchStatus(StrEnum):
@@ -219,3 +219,160 @@ def _ambiguous_reason(
     if has_duplicate_invoices:
         return AmbiguousReferenceReason.DUPLICATE_INVOICE_REFERENCE
     return AmbiguousReferenceReason.DUPLICATE_PAYMENT_REFERENCE
+
+# ---------------------------------------------------------
+# VOSS CYCLES: Customer payment reconciliation extensions
+# ---------------------------------------------------------
+
+class VossPaymentStatus(StrEnum):
+    DEPOSIT_MATCHED = "deposit_matched"
+    POTENTIAL_DUPLICATE = "potential_duplicate"
+    SUGGESTED_MATCH_REQUIRES_APPROVAL = "suggested_match_requires_approval"
+    UNALLOCATED = "unallocated"
+
+
+@dataclass(frozen=True, slots=True)
+class VossDepositMatch:
+    order: CustomerOrderRecord
+    payment: PaymentRecord
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.DEPOSIT_MATCHED,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossDuplicatePayment:
+    order: CustomerOrderRecord
+    payments: tuple[PaymentRecord, ...]
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.POTENTIAL_DUPLICATE,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossSuggestedMatch:
+    order: CustomerOrderRecord
+    payment: PaymentRecord
+    reason: str
+    requires_human_approval: bool = True
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.SUGGESTED_MATCH_REQUIRES_APPROVAL,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossUnallocatedPayment:
+    payment: PaymentRecord
+    reason: str
+    status: VossPaymentStatus = field(
+        default=VossPaymentStatus.UNALLOCATED,
+        init=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class VossPaymentResult:
+    deposit_matches: tuple[VossDepositMatch, ...]
+    potential_duplicates: tuple[VossDuplicatePayment, ...]
+    suggested_matches: tuple[VossSuggestedMatch, ...]
+    unallocated_payments: tuple[VossUnallocatedPayment, ...]
+
+
+def reconcile_voss_payments(
+    orders: Iterable[CustomerOrderRecord],
+    payments: Iterable[PaymentRecord],
+) -> VossPaymentResult:
+
+    order_list = tuple(orders)
+    payment_list = tuple(payments)
+
+    deposit_matches = []
+    potential_duplicates = []
+    suggested_matches = []
+    unallocated_payments = []
+
+    processed_payment_ids = set()
+
+    for order in order_list:
+        normalized_order_ref = _normalize_voss_reference(order.order_id)
+
+        related_payments = tuple(
+            payment
+            for payment in payment_list
+            if normalized_order_ref
+            in _normalize_voss_reference(payment.payment_reference)
+        )
+
+        if len(related_payments) > 1:
+            potential_duplicates.append(
+                VossDuplicatePayment(order, related_payments)
+            )
+            processed_payment_ids.update(
+                payment.payment_id for payment in related_payments
+            )
+            continue
+
+        if len(related_payments) == 1:
+            payment = related_payments[0]
+
+            if (
+                payment.payment_amount.currency
+                == order.deposit_received.currency
+                and payment.payment_amount.value
+                == order.deposit_received.value
+            ):
+                deposit_matches.append(
+                    VossDepositMatch(order, payment)
+                )
+                processed_payment_ids.add(payment.payment_id)
+
+    for payment in payment_list:
+        if payment.payment_id in processed_payment_ids:
+            continue
+
+        reference = payment.payment_reference.casefold()
+
+        candidates = [
+            order
+            for order in order_list
+            if order.customer_name.split()[0].casefold() in reference
+            and order.balance_due.currency == payment.payment_amount.currency
+            and order.balance_due.value == payment.payment_amount.value
+        ]
+
+        if len(candidates) == 1:
+            suggested_matches.append(
+                VossSuggestedMatch(
+                    candidates[0],
+                    payment,
+                    "Customer name and balance amount match; human approval required.",
+                )
+            )
+            processed_payment_ids.add(payment.payment_id)
+
+    for payment in payment_list:
+        if payment.payment_id not in processed_payment_ids:
+            unallocated_payments.append(
+                VossUnallocatedPayment(
+                    payment,
+                    "No reliable automatic payment match found.",
+                )
+            )
+
+    return VossPaymentResult(
+        tuple(deposit_matches),
+        tuple(potential_duplicates),
+        tuple(suggested_matches),
+        tuple(unallocated_payments),
+    )
+
+
+def _normalize_voss_reference(reference: str) -> str:
+    return "".join(
+        character.lower()
+        for character in reference
+        if character.isalnum()
+    )
