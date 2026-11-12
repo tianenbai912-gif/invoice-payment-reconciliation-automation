@@ -439,12 +439,14 @@ def load_customer_orders_csv(path: Path) -> ImportResult[CustomerOrderRecord]:
 
     return ImportResult(records=tuple(records), diagnostics=diagnostics)
 
+
 def load_supplier_invoice_csv(
     path: str | Path,
 ) -> ImportResult[SupplierInvoiceRecord]:
     """Load and validate supplier invoice line items from CSV."""
     grouped = {}
     errors = []
+    rows_seen = 0
 
     with Path(path).open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
@@ -467,10 +469,22 @@ def load_supplier_invoice_csv(
             raise ValueError("Supplier invoice CSV is missing required columns.")
 
         for row_number, row in enumerate(reader, start=2):
+            rows_seen += 1
+
             try:
                 invoice_id = row["supplier_invoice_id"].strip()
                 currency = row["currency"].strip().upper()
                 description = row["description"].strip()
+
+                expected_total = (
+                    Decimal(row["subtotal"])
+                    + Decimal(row["vat_amount"])
+                )
+
+                if expected_total != Decimal(row["total_amount"]):
+                    raise ValueError(
+                        "Supplier invoice total does not equal subtotal plus VAT."
+                    )
 
                 review_required = (
                     "re-spray" in description.casefold()
@@ -512,7 +526,7 @@ def load_supplier_invoice_csv(
                 grouped[invoice_id]["lines"].append(line)
 
             except (ValueError, KeyError, ArithmeticError) as exc:
-               errors.append(
+                errors.append(
                     ValidationError(
                         source=str(path),
                         row_number=row_number,
@@ -539,7 +553,7 @@ def load_supplier_invoice_csv(
 
     diagnostics = _build_diagnostics(
         source=str(path),
-        rows_seen=len(records) + len(errors),
+        rows_seen=rows_seen,
         valid_rows=len(records),
         errors=errors,
     )
