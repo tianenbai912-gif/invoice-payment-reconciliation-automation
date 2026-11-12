@@ -127,7 +127,122 @@ def _load_payments(
         records=tuple(records),
         diagnostics=_build_diagnostics("payments", rows_seen, len(records), errors),
     )
+def load_supplier_invoice_csv(
+    path: str | Path,
+) -> ImportResult[SupplierInvoiceRecord]:
+    """Load supplier invoice records from a CSV file."""
 
+    records: list[SupplierInvoiceRecord] = []
+    errors: list[ValidationError] = []
+    rows_seen = 0
+
+    required_fields = (
+        "supplier_name",
+        "supplier_invoice_id",
+        "invoice_date",
+        "due_date",
+        "order_reference",
+        "description",
+        "net_amount",
+        "currency",
+        "subtotal",
+        "vat_amount",
+        "total_amount",
+    )
+
+    grouped: dict[str, dict] = {}
+
+    with Path(path).open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+
+        for row_number, row in enumerate(reader, start=2):
+            rows_seen += 1
+            values = _normalize_values(row, required_fields)
+            missing_fields, row_errors = _required_errors(
+                "supplier_invoices", row_number, values
+            )
+
+            invoice_date = _validated_date(
+                "supplier_invoices", row_number, "invoice_date",
+                values["invoice_date"], missing_fields
+            )
+            due_date = _validated_date(
+                "supplier_invoices", row_number, "due_date",
+                values["due_date"], missing_fields
+            )
+
+            money = {}
+            for field in ("net_amount", "subtotal", "vat_amount", "total_amount"):
+                result = _validated_money(
+                    "supplier_invoices", row_number, field,
+                    values[field], values["currency"], missing_fields
+                )
+                money[field] = result[0]
+                if result[1] is not None:
+                    row_errors.append(result[1])
+
+            for result in (invoice_date, due_date):
+                if result[1] is not None:
+                    row_errors.append(result[1])
+
+            errors.extend(row_errors)
+
+            if row_errors:
+                continue
+
+            invoice_id = values["supplier_invoice_id"]
+
+            if invoice_id not in grouped:
+                grouped[invoice_id] = {
+                    "supplier_name": values["supplier_name"],
+                    "invoice_date": invoice_date[0],
+                    "due_date": due_date[0],
+                    "subtotal": money["subtotal"],
+                    "vat_amount": money["vat_amount"],
+                    "total_amount": money["total_amount"],
+                    "source_row": row_number,
+                    "lines": [],
+                }
+
+            review_required = (
+                "re-spray" in values["description"].casefold()
+                or "respray" in values["description"].casefold()
+            )
+
+            grouped[invoice_id]["lines"].append(
+                SupplierInvoiceLine(
+                    order_reference=values["order_reference"],
+                    description=values["description"],
+                    net_amount=money["net_amount"],
+                    review_required=review_required,
+                    review_note=(
+                        "Supplier charge requires human review."
+                        if review_required else None
+                    ),
+                )
+            )
+
+    for invoice_id, data in grouped.items():
+        records.append(
+            SupplierInvoiceRecord(
+                supplier_name=data["supplier_name"],
+                supplier_invoice_id=invoice_id,
+                invoice_date=data["invoice_date"],
+                due_date=data["due_date"],
+                lines=tuple(data["lines"]),
+                subtotal=data["subtotal"],
+                vat_amount=data["vat_amount"],
+                total_amount=data["total_amount"],
+                source_row=data["source_row"],
+            )
+        )
+
+    return ImportResult(
+        records=tuple(records),
+        diagnostics=_build_diagnostics(
+            "supplier_invoices", rows_seen, len(records), errors
+        ),
+    )
 
 def _read_csv(path: str | Path) -> Iterator[tuple[int, dict[str, str | None]]]:
     with Path(path).open("r", encoding="utf-8-sig", newline="") as csv_file:
